@@ -6,6 +6,5 @@ import mdx from 'fumadocs-mdx/vite';
 import * as MdxConfig from './source.config';
 
 export default defineConfig({
-  base: '/realworld-scalable-architecture/',
   plugins: [mdx(MdxConfig), tailwindcss(), reactRouter(), tsconfigPaths()],
 });
