@@ -6,8 +6,8 @@
 
 Explore real-world scenarios and best practices for scalable architecture in this comprehensive repo.
 
+![Vercel Pass](https://vercelbadge.vercel.app/api/vahidvdn/realworld-scalable-architecture)
 ![Fumadocs](https://img.shields.io/badge/Powered%20by-Fumadocs-0ca5e9)
-![Vercel](https://img.shields.io/badge/Powered%20by-Vercel-0ca5e9)
 ![License](https://img.shields.io/badge/License-MIT-blue.svg)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-orange.svg)](https://github.com/vahidvdn/realworld-design-patterns/compare)
 ![GitHub User's stars](https://img.shields.io/github/stars/vahidvdn%2Frealworld-scalable-architecture)
