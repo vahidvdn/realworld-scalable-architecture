@@ -12,6 +12,7 @@ import { type PageTree } from 'fumadocs-core/server';
 import defaultMdxComponents from 'fumadocs-ui/mdx';
 import { docs } from '../../source.generated';
 import { toClientRenderer } from 'fumadocs-mdx/runtime/vite';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 export async function loader({ params }: Route.LoaderArgs) {
   const slugs = params['*'].split('/').filter((v) => v.length > 0);
@@ -24,6 +25,12 @@ export async function loader({ params }: Route.LoaderArgs) {
   };
 }
 
+const components = {
+  ...defaultMdxComponents,
+  Tab,
+  Tabs,
+};
+
 const renderer = toClientRenderer(
   docs.doc,
   ({ toc, default: Mdx, frontmatter }) => {
@@ -34,7 +41,7 @@ const renderer = toClientRenderer(
         <DocsTitle>{frontmatter.title}</DocsTitle>
         <DocsDescription>{frontmatter.description}</DocsDescription>
         <DocsBody>
-          <Mdx components={{ ...defaultMdxComponents }} />
+          <Mdx components={{ ...components }} />
         </DocsBody>
       </DocsPage>
     );
