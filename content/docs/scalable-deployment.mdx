@@ -4,7 +4,6 @@ description: |
   Scalable and Zero-Downtime Deployments with Managed Instance Groups and CI/CD
 ---
 
-
 This document summarizes a technical discussion about how to deploy, scale, and update applications using instance groups — collections of identical servers that are managed as a single unit.
 It explains the concepts of immutable infrastructure, rolling updates, and zero-downtime deployments, showing how new versions of an application can be released safely without disrupting active users.
 
@@ -29,18 +28,18 @@ First let's see the overview of the topic. These are our goals that we want to a
 <div className="fd-steps">
   <div className="fd-step">
     ### Push & CI/CD
-    The first step is pushing our code. First make sure to increase your version in your package.json file. We are going to need this new version in the next steps. Then push your code to the repository. We are going to use gitlab ci or GitHub Actions for CI/CD. Note that we can get this version (e.g `1.0.0`) from the package.json file as following: `VERSION=$(node -p "require('./package.json').version")`.
+      The first step is pushing our code. First make sure to increase your version in your package.json file. We are going to need this new version in the next steps. Then push your code to the repository. We are going to use gitlab ci or GitHub Actions for CI/CD. Note that we can get this version (e.g `1.0.0`) from the package.json file as following: `VERSION=$(node -p "require('./package.json').version")`.
 
-  ```npm
-  npm version minor
-  ```
+    ```npm
+    npm version minor
+    ```
 
-  Then just push your code.
+    Then just push your code.
 
   
-  <svg viewBox="290 220 600 300" width="100%">
-    <use href="../../managed-instance-group.svg" />
-  </svg>
+    <svg viewBox="290 220 600 300" width="100%">
+      <use href="../../managed-instance-group.svg" />
+    </svg>
   </div >
 
   <div className="fd-step">
@@ -92,7 +91,6 @@ First let's see the overview of the topic. These are our goals that we want to a
       </Tab>
     </Tabs>
 
-  
   <svg viewBox="650 215 600 300" width="100%">
     <use href="../../managed-instance-group.svg" />
   </svg>
