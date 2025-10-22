@@ -4,7 +4,7 @@ description: |
   Scalable and Zero-Downtime Deployments with Managed Instance Groups and CI/CD
 ---
 
-This document summarizes a technical discussion about how to deploy, scale, and update applications using instance groups — collections of identical servers that are managed as a single unit.
+This document summarizes a technical discussion about how to deploy, scale, and update applications using **managed instance groups (MIG)** — collections of identical servers that are managed as a single unit.
 It explains the concepts of immutable infrastructure, rolling updates, and zero-downtime deployments, showing how new versions of an application can be released safely without disrupting active users.
 
 
@@ -82,4 +82,148 @@ First let's see the overview of the topic. These are our goals that we want to a
       </Tab>
     </Tabs>
   </div >
+  <div className="fd-step">
+    ### Docker build
+    Now we need to build our docker image. We are going to use `docker` command line to build our docker image. We are going to use this build in the next steps. This is how are CI looks like:
+
+    <Tabs items={['Gitlab CI', 'GitHub Actions']}>
+      <Tab value="Gitlab CI">
+        ```yaml
+        script:
+          - docker build -t $IMAGE_NAME:$VERSION .
+          - docker push $IMAGE_NAME:$VERSION
+          - docker tag $IMAGE_NAME:$VERSION $IMAGE_NAME:latest
+          - docker push $IMAGE_NAME:latest
+        ```
+      </Tab>
+      <Tab value="GitHub Actions">
+        ```yaml
+        - name: Build & push Docker image
+            run: |
+              IMAGE="europe-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/my-repo/nodejs-app"
+              docker build -t $IMAGE:${{ steps.vars.outputs.version }} .
+              docker push $IMAGE:${{ steps.vars.outputs.version }}
+              docker tag $IMAGE:${{ steps.vars.outputs.version }} $IMAGE:latest
+              docker push $IMAGE:latest
+        ```
+      </Tab>
+    </Tabs>
+  </div>
+
+  <div className="fd-step">
+    ### Create instance template
+    Now we need to create an instance template. We are going to use `gcloud` command line to create an instance template. Unlike a traditional VM where you SSH and deploy code manually, MIGs are immutable:
+You don’t “update” running instances.
+
+
+Instead, you create a new machine definition (instance template) and let the MIG replace old instances with new ones.
+  <Tabs items={['Gitlab CI', 'GitHub Actions']}>
+      <Tab value="Gitlab CI">
+        ```yaml
+        script:
+          # Create new instance template
+          - TEMPLATE_NAME="nodejs-app-template-$VERSION"
+          - gcloud compute instance-templates create-with-container $TEMPLATE_NAME \
+              --machine-type=e2-medium \
+              --boot-disk-size=20GB \
+              --container-image=$IMAGE_NAME:$VERSION \
+              --tags=http-server
+        ```
+      </Tab>
+      <Tab value="GitHub Actions">
+        ```yaml
+        - name: Create new instance template
+        run: |
+          TEMPLATE_NAME="nodejs-app-template-${{ steps.vars.outputs.version }}"
+          IMAGE="europe-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/my-repo/nodejs-app:${{ steps.vars.outputs.version }}"
+          gcloud compute instance-templates create-with-container $TEMPLATE_NAME \
+            --machine-type=e2-medium \
+            --boot-disk-size=20GB \
+            --container-image=$IMAGE \
+            --tags=http-server
+        ```
+      </Tab>
+    </Tabs>   
+        
+  </div>
+
+  <div className="fd-step">
+    ### Rollout and Deployment
+    Now we need to rollout and deploy our instance template. We are going to use `gcloud` command line to rollout and deploy our instance template.
+
+    **Rollout strategies in MIG**
+
+    You control rollout with update policies when you apply a new template.
+    1. Rolling Update (most common). MIG replaces instances in batches. Example:
+        - You have 10 instances.
+        - Policy: maxSurge = 2, maxUnavailable = 1.
+        - MIG creates 2 new VMs (surge) → waits until they’re healthy → deletes 1 old VM (unavailable).
+        - Repeats until all old ones are gone.
+
+        ✅ Benefits: Continuous capacity (users never lose all servers).
+    Smooth, controlled rollout.
+
+    2. Blue/Green (Replace All at Once)
+
+        - MIG creates a full set of new instances alongside the old ones (using maxSurge = N).
+        - Once all new instances are healthy → it deletes the old ones.
+
+        ✅ Quick switchover. Easier rollback (just switch traffic back).
+
+        ❌ Requires extra capacity during rollout.
+    
+    3. Canary Update
+
+        - You replace just a few instances first (say 1–2).
+        - Monitor them for issues.
+        - If stable, continue with full rollout.
+
+        ✅ Safer — catch issues early. Works great with monitoring & alerting.
+
+        ❌ Unequal User Experience (Some users may hit old instances, others hit the canary instances.)
+    <Tabs items={['Gitlab CI', 'GitHub Actions']}>
+      <Tab value="Gitlab CI">
+        ```yaml
+        script:
+          # Update MIG and start rolling update
+          - gcloud compute instance-groups managed set-instance-template my-app-mig \
+            --template=$TEMPLATE_NAME
+          - gcloud compute instance-groups managed rolling-action start-update my-app-mig \
+            --version template=$TEMPLATE_NAME \
+            --max-unavailable=1 \
+            --max-surge=1
+        ```
+      </Tab>
+      <Tab value="GitHub Actions">
+        ```yaml
+        - name: Update MIG and start rolling update
+          run: |
+            gcloud compute instance-groups managed set-instance-template my-app-mig \ --template=nodejs-app-template-${{ steps.vars.outputs.version }} gcloud compute instance-groups managed rolling-action start-update my-app-mig \ --version template=nodejs-app-template-${{ steps.vars.outputs.version }} \ --max-unavailable=1 \ --max-surge=1
+        ```
+      </Tab>
+    </Tabs>
+    
 </div>
+</div>
+
+
+## Summary
+
+1. Build your code into an image or startup process
+    - Use Google Compute Engine instance templates that include your app.
+    - Or use a Container-Optimized OS instance that pulls your Docker image at startup.
+    - Or provide a startup script that installs your code/artifacts when the VM boots.
+
+
+2. Create a new Instance Template
+Define a new template (with new image, new startup script, or updated container tag).
+This template becomes the source for new VMs.
+
+
+3. Update your MIG to use the new template
+Tell the MIG: **"start using this new template."**
+
+
+4. Rolling update
+MIG will gradually replace old VMs with new ones (based on your rollout policy).
+During rollout, the load balancer only routes traffic to healthy VMs.
