@@ -1,0 +1,62 @@
+---
+title: Messaging
+description: |
+  Messaging patterns and best practices
+---
+
+## Overview
+
+Messaging is a fundamental concept in distributed systems architecture that enables communication between different components, services, or systems. In scalable architectures, effective messaging strategies are crucial for building resilient, maintainable, and high-performance applications. This section covers the two primary messaging patterns: synchronous and asynchronous.
+
+<img src="/messaging.svg" alt="Messaging" width="100%" />
+
+## Synchronous vs Asynchronous Messaging
+
+### Synchronous Messaging
+
+Synchronous messaging involves direct, real-time communication where the sender waits for a response from the receiver before proceeding. This pattern creates a tight coupling between components and follows a request-response model.
+
+**Key characteristics:**
+- Immediate response
+- Blocking operation (sender waits)
+- Simpler to implement and reason about
+- Typically uses protocols like HTTP/REST, gRPC, or direct API calls
+- Well-suited for operations requiring immediate confirmation
+
+**Use cases:**
+- User authentication
+- Real-time data retrieval
+- Operations requiring immediate validation
+- CRUD operations with immediate feedback
+
+### Asynchronous Messaging
+
+Asynchronous messaging enables communication without requiring the sender to wait for a response. The sender can continue processing after dispatching a message, and the receiver processes it when available.
+
+**Key characteristics:**
+- Non-blocking operation (sender continues execution)
+- Loose coupling between components
+- Better fault tolerance and resilience
+- Typically uses message brokers, queues, or event buses
+- Supports higher scalability and throughput
+
+**Use cases:**
+- Background processing
+- Event notifications
+- Workload distribution
+- Long-running operations
+- Cross-service communication in microservices
+
+### Key Differences
+
+| Aspect | Synchronous | Asynchronous |
+|--------|------------|---------------|
+| Timing | Real-time, immediate | Delayed, eventual |
+| Coupling | Tight coupling | Loose coupling |
+| Complexity | Simpler implementation | More complex patterns |
+| Scalability | Limited by response time | Highly scalable |
+| Failure Handling | Immediate error response | Requires additional patterns (retry, DLQ) |
+| System Load | Can create bottlenecks | Better load distribution |
+| Use Case | Interactive operations | Background processing |
+
+Choosing between synchronous and asynchronous messaging depends on your specific requirements for responsiveness, scalability, and system coupling. Many modern architectures use a combination of both patterns to leverage their respective strengths.
