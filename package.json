@@ -2,6 +2,7 @@
   "name": "realworld-scalable-architecture",
   "private": true,
   "type": "module",
+  "version": "0.0.1",
   "scripts": {
     "build": "react-router build",
     "dev": "react-router dev",
