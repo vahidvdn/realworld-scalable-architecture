@@ -13,6 +13,7 @@ import defaultMdxComponents from 'fumadocs-ui/mdx';
 import { docs } from '../../source.generated';
 import { toClientRenderer } from 'fumadocs-mdx/runtime/vite';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Mermaid } from 'components/markdown/mermaid';
 
 export async function loader({ params }: Route.LoaderArgs) {
   const slugs = params['*'].split('/').filter((v) => v.length > 0);
@@ -29,6 +30,7 @@ const components = {
   ...defaultMdxComponents,
   Tab,
   Tabs,
+  Mermaid,
 };
 
 const renderer = toClientRenderer(
