@@ -69,3 +69,7 @@ yarn dev
 If you find this helpful, please star the repository to support the project and help others discover it 🌟
 
 Built with ❤️ for the community of engineers learning scalable architecture. Powered by [Fumadocs](https://fumadocs.dev).
+
+## Related Projects
+
+- [Real World Design Patterns](https://github.com/vahidvdn/realworld-design-patterns)
