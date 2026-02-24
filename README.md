@@ -31,7 +31,7 @@ Example Diagrams: There is also a diagram to represent the oveview of each patte
 
 #### Messaging
 
-![Messaging](public/asynchronous.svg)
+<img src="public/asynchronous.svg" alt="Messaging" width="100%" />
 
 #### CAP Theorem
 
