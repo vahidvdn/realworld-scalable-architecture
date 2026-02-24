@@ -16,7 +16,6 @@ Explore real-world scenarios and best practices for scalable architecture in thi
 
 <hr />
 
-
 Scalable Architecture Learning Resources — a collection of diagrams, notes, and examples focused on building and operating scalable systems. This site helps you explore topics like distributed systems, cloud infrastructure, observability, caching, data stores, and reliability engineering.
 
 ## How to Learn? 📖
@@ -24,18 +23,19 @@ Scalable Architecture Learning Resources — a collection of diagrams, notes, an
 Visit the learning hub to explore topics, diagrams, and guides:
 https://realworld-scalable-architecture.vercel.app/
 
-
-
 Example Diagrams: There is also a diagram to represent the oveview of each pattern to understand better. These are some examples:
 
 #### Managed Instance Group
 
 ![Managed Instance Group](public/managed-instance-group.svg)
 
-
 #### Messaging
 
-![Messaging](public/messaging.svg)
+![Messaging](public/asynchronous.svg)
+
+#### CAP Theorem
+
+![CAP Theorem](public/CAP-CP.svg)
 
 ## Features
 
@@ -44,12 +44,12 @@ Example Diagrams: There is also a diagram to represent the oveview of each patte
 - Fast dev workflow powered by `react-router`
 - Production build and optional static deployment
 
-
 ## Contributing Content
 
 - Add or update materials in `content/docs/`.
 - Include diagrams under `public/` and reference them in your content.
 - Follow clear, practical examples and link to authoritative external resources.
+
 ---
 
 ## Run Locally
