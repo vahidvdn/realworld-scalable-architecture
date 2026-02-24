@@ -35,7 +35,7 @@ Example Diagrams: There is also a diagram to represent the oveview of each patte
 
 #### CAP Theorem
 
-![CAP Theorem](public/CAP-CP.svg)
+<img src="public/CAP-CP.svg" alt="CAP Theorem" width="100%" />
 
 ## Features
 
