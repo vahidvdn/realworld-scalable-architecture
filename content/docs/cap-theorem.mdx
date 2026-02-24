@@ -4,8 +4,90 @@ description: |
   CAP Theorem and its implications on distributed systems
 ---
 
-CAP Theorem and its implications on distributed systems
+In the CAP theorem (introduced by Eric Brewer), a distributed system can only fully guarantee two out of three properties at the same time:
+
+- C — Consistency
+- A — Availability
+- P — Partition Tolerance
+
+Let's review more in depth.
 
 <img src="/CAP-Theorem.svg" alt="CAP Theorem" width="100%" />
 
 ## Overview
+
+Before going through each letter in CAP Theorem, we need to first understand what the "Netword Partition" means. Then we can understand better.
+
+#### Network Partition
+
+A partition happens when nodes in a distributed system cannot communicate with each other (e.g., network failure, region outage, etc.). Example:
+
+```
+Node A  ❌  Node B
+```
+
+They are alive, but the network between them is broken.
+
+#### During a Partition
+
+Now suppose a client sends a write request to Node A. But Node A cannot confirm with Node B because the network is broken. The system now has two options:
+
+Option 1: Stay Available (AP behavior)
+
+- Node A accepts the write.
+- Node B does not know about it.
+- Now the system has inconsistent data.
+
+Option 2: Stay Consistent (CP behavior)
+
+- Node A refuses the write (or blocks it).
+- It waits until communication with Node B is restored.
+- Data remains consistent. But the system becomes unavailable for that request.
+
+## CP System
+
+<img src="/CAP-CP.svg" alt="CAP Theorem" width="100%" />
+
+What happens during a partition? If nodes can’t talk to each other:
+
+- The system refuses writes (or even reads).
+- It waits until a majority (quorum) can agree.
+- Some clients may get errors or timeouts.
+
+Think of:
+
+- Banking systems
+- Payment processing
+- Inventory control
+
+Incorrect data is worse than temporary downtime.
+
+## AP System
+
+<img src="/CAP-AP.svg" alt="CAP Theorem" width="100%" />
+
+What happens during a partition? If nodes can't talk to each other:
+
+- The system continues to accept reads and writes.
+- Each node operates independently.
+- Data may become inconsistent across nodes.
+
+Think of:
+
+- Social media feeds
+- Content delivery networks
+- Recommendation systems
+
+Temporary inconsistency is acceptable when availability is more important.
+
+## AC System
+
+AC systems, Availability + Consistency, are theoretically mentioned, but in practice they cannot exist in a distributed system that can experience network partitions. Let's see why.
+
+CAP says: In the presence of a network partition (P), a distributed system must choose either Consistency (C) or Availability (A).
+
+- C — all nodes see the same data at the same time
+- A — every request eventually gets a response
+- P — system continues to operate even if the network is partitioned
+
+So P is **unavoidable** in real distributed systems because network failures can always happen.
