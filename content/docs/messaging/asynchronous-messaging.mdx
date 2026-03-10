@@ -22,7 +22,6 @@ In asynchronous communication:
 
 Let's examine a common asynchronous messaging scenario in an order processing flow:
 
-
 ```mermaid
 sequenceDiagram
     participant Client
@@ -30,7 +29,7 @@ sequenceDiagram
     participant Database
     participant Message Queue
     participant Notification Service
-    
+
     Client->>Order Service: Create Order Request
     Order Service->>Database: Save order
     Order Service-->>Client: Order confirmation (ID)
@@ -58,22 +57,23 @@ async function createOrder(orderDetails) {
     const order = await db.orders.create({
       ...orderDetails,
       status: 'CREATED',
-      createdAt: new Date()
+      createdAt: new Date(),
     });
-    
+
     // Asynchronously publish notification event (fire & forget)
     await messageBroker.publish('order.created', {
       orderId: order.id,
       customerId: order.customerId,
       orderTotal: order.total,
-      timestamp: new Date()
+      timestamp: new Date(),
     });
-    
+
     // Return immediate response to client
-    return { 
-      success: true, 
+    return {
+      success: true,
       orderId: order.id,
-      message: 'Order created successfully. You will receive a confirmation shortly.'
+      message:
+        'Order created successfully. You will receive a confirmation shortly.',
     };
   } catch (error) {
     console.error('Failed to create order:', error);
@@ -87,20 +87,20 @@ async function processOrderNotifications() {
   await messageBroker.subscribe('order.created', async (message) => {
     try {
       const { orderId, customerId } = message;
-      
+
       // Get customer details
       const customer = await db.customers.findUnique({
-        where: { id: customerId }
+        where: { id: customerId },
       });
-      
+
       // Send notification
       await notificationProvider.send({
         to: customer.email,
         subject: `Order Confirmation #${orderId}`,
         template: 'order-confirmation',
-        data: { orderId, customerName: customer.name, ...message }
+        data: { orderId, customerName: customer.name, ...message },
       });
-      
+
       // Acknowledge successful processing
       await messageBroker.acknowledge(message);
     } catch (error) {
@@ -110,7 +110,6 @@ async function processOrderNotifications() {
   });
 }
 ```
-
 
 ## FAILURES
 
@@ -149,24 +148,25 @@ const orderNotificationsQueue = messageBroker.queue('order-notifications', {
   deadLetter: {
     queueName: 'order-notifications-dlq',
     maxRetries: 3,
-    retryInterval: 60000 // 1 minute
-  }
+    retryInterval: 60000, // 1 minute
+  },
 });
 
 // Monitor DLQ
 async function monitorDeadLetterQueue() {
   const dlq = messageBroker.queue('order-notifications-dlq');
-  
+
   // Check DLQ periodically
+  // setInterval is not ideal for production, but works for demonstration
   setInterval(async () => {
     const messageCount = await dlq.getMessageCount();
-    
+
     if (messageCount > 0) {
       // Alert operations team
       await alertingSystem.sendAlert({
         severity: 'warning',
         message: `${messageCount} messages in order-notifications-dlq`,
-        source: 'notification-service'
+        source: 'notification-service',
       });
     }
   }, 300000); // Check every 5 minutes
@@ -176,21 +176,21 @@ async function monitorDeadLetterQueue() {
 async function reprocessDlqMessages() {
   const dlq = messageBroker.queue('order-notifications-dlq');
   const mainQueue = messageBroker.queue('order-notifications');
-  
+
   // Get messages from DLQ
   const failedMessages = await dlq.receiveMessages(10);
-  
+
   for (const message of failedMessages) {
     try {
       // Fix any issues with the message if needed
       const fixedMessage = await fixMessageIssues(message);
-      
+
       // Republish to main queue
       await mainQueue.sendMessage(fixedMessage);
-      
+
       // Remove from DLQ
       await dlq.deleteMessage(message);
-      
+
       console.log(`Successfully reprocessed message ${message.id}`);
     } catch (error) {
       console.error(`Failed to reprocess message ${message.id}:`, error);
@@ -199,9 +199,143 @@ async function reprocessDlqMessages() {
 }
 ```
 
+#### Idempotency
+
+Idempotency ensures that processing the same message multiple times produces the same result as processing it once. This is critical in asynchronous systems where messages can be delivered more than once due to network issues, retries, or broker failures.
+
+##### Why Idempotency Matters
+
+In distributed systems, **at-least-once delivery** is often the only guarantee message brokers can provide. This means:
+
+- Messages may be delivered multiple times
+- Network failures can cause duplicate sends
+- Consumer crashes after processing but before acknowledgment lead to redelivery
+- Broker failovers can result in message duplication
+
+Without idempotency, duplicate messages can cause:
+
+- **Double charging** customers in payment systems
+- **Duplicate notifications** sent to users
+- **Incorrect inventory counts** in stock management
+- **Data inconsistencies** across services
+
+**Implement Idempotency**
+
+Track processed messages using unique identifiers:
+
+```typescript
+// Message consumer with idempotency key tracking
+async function processOrderNotification(message) {
+  const idempotencyKey = message.messageId; // or message.orderId
+
+  // Start transaction
+  return await db.$transaction(async (tx) => {
+    // Check if we've already processed this message
+    const existing = await tx.processedMessages.findUnique({
+      where: { messageId: idempotencyKey },
+    });
+
+    if (existing) {
+      console.log(`Message ${idempotencyKey} already processed, skipping`);
+      return { status: 'duplicate', result: existing.result };
+    }
+
+    // Process the message
+    const customer = await tx.customers.findUnique({
+      where: { id: message.customerId },
+    });
+
+    await notificationProvider.send({
+      to: customer.email,
+      subject: `Order Confirmation #${message.orderId}`,
+      template: 'order-confirmation',
+      data: message,
+    });
+
+    // Record that we've processed this message
+    await tx.processedMessages.create({
+      data: {
+        messageId: idempotencyKey,
+        processedAt: new Date(),
+        result: JSON.stringify({ sent: true, orderId: message.orderId }),
+      },
+    });
+
+    return { status: 'processed', orderId: message.orderId };
+  });
+}
+```
+
+**3. Database Schema for Idempotency**
+
+```sql
+-- Table to track processed messages
+CREATE TABLE processed_messages (
+  message_id VARCHAR(255) PRIMARY KEY,
+  processed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  result JSONB,
+  expires_at TIMESTAMP,
+  INDEX idx_expires_at (expires_at)
+);
+
+-- Cleanup job to remove old entries (run periodically)
+DELETE FROM processed_messages
+WHERE expires_at < NOW();
+```
+
+**4. Composite Idempotency Keys**
+
+For complex scenarios, use composite keys:
+
+```typescript
+async function processInventoryUpdate(message) {
+  // Composite key: productId + version ensures idempotency per product version
+  const idempotencyKey = `${message.productId}-${message.version}`;
+
+  const existing = await db.processedMessages.findUnique({
+    where: { messageId: idempotencyKey },
+  });
+
+  if (existing) {
+    return { status: 'duplicate' };
+  }
+
+  // Update inventory only if version matches (optimistic locking)
+  const updated = await db.products.updateMany({
+    where: {
+      id: message.productId,
+      version: message.version - 1, // Ensure we're updating the right version
+    },
+    data: {
+      stock: message.newStock,
+      version: message.version,
+    },
+  });
+
+  if (updated.count === 0) {
+    throw new Error('Version mismatch - product already updated');
+  }
+
+  // Record processing
+  await db.processedMessages.create({
+    data: {
+      messageId: idempotencyKey,
+      processedAt: new Date(),
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+    },
+  });
+
+  return { status: 'processed' };
+}
+```
+
+#### DLQ Monitoring and Management
+
+The DLQ monitoring and management system ensures that failed messages are properly tracked and can be reprocessed when issues are resolved. As mentioned in the comments, `setInterval` is not ideal for production, but works for demonstration.
+
 ### Publisher Level
 
-One challenge with asynchronous messaging is ensuring that database transactions and message publishing are atomic. **Let's say the broker itself is down or a failure happen just before the message is published.** The Outbox Pattern solves this by storing messages in a database "outbox" table as part of the same transaction. 
+One challenge with asynchronous messaging is ensuring that database transactions and message publishing are atomic. **Let's say the broker itself is down or a failure happen just before the message is published.** The Outbox Pattern solves this by storing messages in a database "outbox" table as part of the same transaction.
 
 #### Outbox Pattern
 
@@ -230,10 +364,10 @@ async function createOrderWithOutbox(orderDetails) {
       data: {
         ...orderDetails,
         status: 'CREATED',
-        createdAt: new Date()
-      }
+        createdAt: new Date(),
+      },
     });
-    
+
     // 2. Store the outgoing message in the outbox table (same transaction)
     await tx.outbox.create({
       data: {
@@ -242,18 +376,19 @@ async function createOrderWithOutbox(orderDetails) {
           orderId: order.id,
           customerId: order.customerId,
           orderTotal: order.total,
-          timestamp: new Date()
+          timestamp: new Date(),
         }),
         status: 'PENDING',
-        createdAt: new Date()
-      }
+        createdAt: new Date(),
+      },
     });
-    
+
     // Return response to client
-    return { 
-      success: true, 
+    return {
+      success: true,
       orderId: order.id,
-      message: 'Order created successfully. You will receive a confirmation shortly.'
+      message:
+        'Order created successfully. You will receive a confirmation shortly.',
     };
   });
 }
@@ -266,48 +401,51 @@ async function processOutbox() {
       const pendingMessages = await db.outbox.findMany({
         where: { status: 'PENDING' },
         orderBy: { createdAt: 'asc' },
-        take: 10
+        take: 10,
       });
-      
+
       if (pendingMessages.length === 0) {
         // No messages to process, wait before checking again
         await sleep(1000);
         continue;
       }
-      
+
       for (const message of pendingMessages) {
         try {
           // Publish to message broker
           await messageBroker.publish(
             message.eventType,
-            JSON.parse(message.payload)
+            JSON.parse(message.payload),
           );
-          
+
           // Mark as processed
           await db.outbox.update({
             where: { id: message.id },
-            data: { 
+            data: {
               status: 'PROCESSED',
-              processedAt: new Date()
-            }
+              processedAt: new Date(),
+            },
           });
         } catch (error) {
-          console.error(`Failed to process outbox message ${message.id}:`, error);
-          
+          console.error(
+            `Failed to process outbox message ${message.id}:`,
+            error,
+          );
+
           // Mark as failed if it has been retried too many times
           if (message.retryCount >= 5) {
             await db.outbox.update({
               where: { id: message.id },
-              data: { 
+              data: {
                 status: 'FAILED',
-                error: error.message
-              }
+                error: error.message,
+              },
             });
           } else {
             // Increment retry count
             await db.outbox.update({
               where: { id: message.id },
-              data: { retryCount: { increment: 1 } }
+              data: { retryCount: { increment: 1 } },
             });
           }
         }
