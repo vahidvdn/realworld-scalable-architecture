@@ -117,6 +117,7 @@ There are several sections that failure can happen. Let's review them.
 
 1. Subscriber Level
 2. Publisher Level
+3. Business Domain Level
 
 ### Subscriber Level
 
@@ -465,6 +466,248 @@ async function processOutbox() {
 - **Ordering**: Preserves message order by processing outbox entries in sequence
 - **Idempotency**: Can be designed to handle duplicate message publishing
 - **Transactional Integrity**: Maintains data consistency across systems
+
+### Business Domain Level
+
+The previous failure types were **technical** — a subscriber crashes, a broker goes down, a transaction fails to commit. But what happens when every service processes its message successfully, yet the **business outcome is invalid**?
+
+For example, consider an e-commerce order flow:
+
+1. **Order Service** creates the order ✅
+2. **Payment Service** charges the customer ✅
+3. **Inventory Service** tries to reserve items — but the product is **out of stock** ❌
+
+There is no technical failure here. Every service received and processed its message correctly. The problem is that the business operation as a whole cannot be completed. The payment needs to be refunded and the order needs to be cancelled.
+
+In a monolithic system, you would wrap this in a single database transaction and roll back. In a distributed system with asynchronous messaging, there is no shared transaction. Each service has its own database. This is where the **Saga pattern** comes in.
+
+#### Saga Pattern
+
+A saga is a sequence of local transactions across multiple services. If one step fails due to a business rule violation, the saga executes **compensating transactions** to undo the changes made by previous steps.
+
+There are two common approaches to implementing sagas:
+
+#### Choreography-Based Saga
+
+Each service listens for events and decides what to do next. There is no central coordinator — services react to each other's events.
+
+```mermaid
+sequenceDiagram
+    participant Order Service
+    participant Payment Service
+    participant Inventory Service
+
+    Order Service->>Payment Service: order.created
+    Payment Service->>Inventory Service: payment.completed
+    Inventory Service-->>Payment Service: inventory.failed (out of stock)
+    Payment Service-->>Order Service: payment.refunded
+    Order Service-->>Order Service: order.cancelled
+```
+
+##### How It Works
+
+1. **Order Service** creates an order and publishes `order.created`
+2. **Payment Service** receives the event, charges the customer, and publishes `payment.completed`
+3. **Inventory Service** receives the event, tries to reserve stock, but the item is out of stock — publishes `inventory.failed`
+4. **Payment Service** listens for `inventory.failed`, refunds the customer, and publishes `payment.refunded`
+5. **Order Service** listens for `payment.refunded` and marks the order as cancelled
+
+Each service only knows about the events it cares about. There is no single place that defines the overall flow.
+
+##### Implementation
+
+```typescript
+// Order Service
+await messageBroker.subscribe('payment.refunded', async (message) => {
+  await db.orders.update({
+    where: { id: message.orderId },
+    data: { status: 'CANCELLED', reason: message.reason },
+  });
+  await messageBroker.acknowledge(message);
+});
+
+// Payment Service
+await messageBroker.subscribe('order.created', async (message) => {
+  const payment = await paymentProvider.charge({
+    customerId: message.customerId,
+    amount: message.orderTotal,
+  });
+
+  await messageBroker.publish('payment.completed', {
+    orderId: message.orderId,
+    paymentId: payment.id,
+    customerId: message.customerId,
+  });
+  await messageBroker.acknowledge(message);
+});
+
+await messageBroker.subscribe('inventory.failed', async (message) => {
+  // Compensating transaction: refund the payment
+  await paymentProvider.refund({ paymentId: message.paymentId });
+
+  await messageBroker.publish('payment.refunded', {
+    orderId: message.orderId,
+    reason: message.reason,
+  });
+  await messageBroker.acknowledge(message);
+});
+
+// Inventory Service
+await messageBroker.subscribe('payment.completed', async (message) => {
+  const reserved = await db.products.updateMany({
+    where: { id: message.productId, stock: { gt: 0 } },
+    data: { stock: { decrement: 1 } },
+  });
+
+  if (reserved.count === 0) {
+    // Business failure: out of stock
+    await messageBroker.publish('inventory.failed', {
+      orderId: message.orderId,
+      paymentId: message.paymentId,
+      reason: 'Product out of stock',
+    });
+  } else {
+    await messageBroker.publish('inventory.reserved', {
+      orderId: message.orderId,
+    });
+  }
+  await messageBroker.acknowledge(message);
+});
+```
+
+**Tradeoffs of Choreography:**
+
+- ✅ Simple to implement for small flows
+- ✅ Services are loosely coupled
+- ❌ Hard to understand the overall flow — logic is spread across services
+- ❌ Difficult to add new steps or change the order
+- ❌ Risk of cyclic dependencies between services
+
+#### Orchestration-Based Saga
+
+A central **orchestrator** service controls the saga. It tells each service what to do and handles failures by invoking compensating transactions.
+
+```mermaid
+sequenceDiagram
+    participant Order Orchestrator
+    participant Order Service
+    participant Payment Service
+    participant Inventory Service
+
+    Order Orchestrator->>Order Service: Create order
+    Order Service-->>Order Orchestrator: Order created
+    Order Orchestrator->>Payment Service: Charge payment
+    Payment Service-->>Order Orchestrator: Payment completed
+    Order Orchestrator->>Inventory Service: Reserve stock
+    Inventory Service-->>Order Orchestrator: Out of stock ❌
+    Note over Order Orchestrator: Business failure → compensate
+    Order Orchestrator->>Payment Service: Refund payment
+    Payment Service-->>Order Orchestrator: Payment refunded
+    Order Orchestrator->>Order Service: Cancel order
+    Order Service-->>Order Orchestrator: Order cancelled
+```
+
+##### Implementation
+
+```typescript
+// Order Saga Orchestrator
+async function executeOrderSaga(orderDetails) {
+  const sagaLog = await db.sagaLog.create({
+    data: {
+      type: 'CREATE_ORDER',
+      status: 'STARTED',
+      payload: JSON.stringify(orderDetails),
+    },
+  });
+
+  const completedSteps = [];
+
+  try {
+    // Step 1: Create order
+    const order = await orderService.create(orderDetails);
+    completedSteps.push({ step: 'ORDER_CREATED', data: order });
+
+    // Step 2: Charge payment
+    const payment = await paymentService.charge({
+      customerId: order.customerId,
+      amount: order.total,
+    });
+    completedSteps.push({ step: 'PAYMENT_CHARGED', data: payment });
+
+    // Step 3: Reserve inventory
+    await inventoryService.reserve({
+      productId: order.productId,
+      quantity: order.quantity,
+    });
+    completedSteps.push({ step: 'INVENTORY_RESERVED' });
+
+    // All steps succeeded
+    await db.sagaLog.update({
+      where: { id: sagaLog.id },
+      data: { status: 'COMPLETED' },
+    });
+
+    return { success: true, orderId: order.id };
+  } catch (error) {
+    // Business failure — run compensating transactions in reverse order
+    await db.sagaLog.update({
+      where: { id: sagaLog.id },
+      data: { status: 'COMPENSATING', error: error.message },
+    });
+
+    await compensate(completedSteps);
+
+    await db.sagaLog.update({
+      where: { id: sagaLog.id },
+      data: { status: 'COMPENSATED' },
+    });
+
+    return { success: false, reason: error.message };
+  }
+}
+
+// Compensating transactions — undo steps in reverse
+async function compensate(completedSteps) {
+  for (const step of [...completedSteps].reverse()) {
+    switch (step.step) {
+      case 'INVENTORY_RESERVED':
+        await inventoryService.release({
+          productId: step.data.productId,
+          quantity: step.data.quantity,
+        });
+        break;
+      case 'PAYMENT_CHARGED':
+        await paymentService.refund({ paymentId: step.data.id });
+        break;
+      case 'ORDER_CREATED':
+        await orderService.cancel({
+          orderId: step.data.id,
+          reason: 'Saga compensation',
+        });
+        break;
+    }
+  }
+}
+```
+
+**Tradeoffs of Orchestration:**
+
+- ✅ Easy to understand — the entire flow is in one place
+- ✅ Easy to add new steps or modify the sequence
+- ✅ Simpler error handling and compensation logic
+- ❌ The orchestrator is a single point of coupling
+- ❌ The orchestrator service can become complex for large flows
+
+#### Choosing Between Choreography and Orchestration
+
+| Aspect | Choreography | Orchestration |
+| --- | --- | --- |
+| **Coupling** | Low — services only know about events | Higher — orchestrator knows all services |
+| **Visibility** | Flow is implicit, spread across services | Flow is explicit, in one place |
+| **Complexity** | Grows quickly with more services | Grows linearly |
+| **Best for** | Simple flows with few steps | Complex flows with many steps or conditions |
+
+For most real-world systems with non-trivial business flows, **orchestration** tends to be the more maintainable choice.
 
 ## When to Use
 
