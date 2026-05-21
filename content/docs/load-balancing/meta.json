@@ -1,0 +1,4 @@
+{
+  "title": "Load Balancing",
+  "pages": ["index", "client-vs-server", "algorithms", "health-checks-and-resilience"]
+}
