@@ -36,5 +36,37 @@
 ul {
   line-height: 1.3;
 }
-  
-  
+
+[data-mermaid-id] {
+  border-left: 2px solid transparent;
+  padding-left: 0.5rem;
+  margin-left: -0.5rem;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
+  border-radius: 0 0.25rem 0.25rem 0;
+}
+
+[data-mermaid-id]:hover,
+[data-mermaid-id].mermaid-link-active {
+  background-color: rgb(254 240 138 / 0.5);
+  border-left-color: rgb(202 138 4);
+}
+
+g.node {
+  transition: filter 150ms ease;
+}
+
+g.node.mermaid-node-active {
+  filter: drop-shadow(0 0 10px rgb(234 179 8 / 0.95));
+}
+
+g.node.mermaid-node-active rect,
+g.node.mermaid-node-active circle,
+g.node.mermaid-node-active ellipse,
+g.node.mermaid-node-active polygon,
+g.node.mermaid-node-active path {
+  stroke: rgb(202 138 4) !important;
+  stroke-width: 3px !important;
+}
+
