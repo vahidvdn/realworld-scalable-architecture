@@ -1,0 +1,147 @@
+---
+title: Redis as a Cache
+description: |
+  Why Redis is the default distributed cache — its data structures, TTL and expiration model, eviction policies, and what to do about persistence.
+---
+
+[Redis](https://redis.io) (REmote DIctionary Server) is an in-memory data store that has become the de-facto distributed cache for most architectures. At its simplest it's a networked key-value store, but the features that matter for caching are the ones that let it behave well *as a cache specifically*: precise expiration, predictable eviction under memory pressure, atomic operations, and rich values that let you cache more than flat strings.
+
+## Why Redis
+
+- **In-memory** — data lives in RAM, so reads and writes are sub-millisecond. There's no disk seek on the hot path.
+- **Single-threaded command execution** — Redis runs commands one at a time on a single thread (for the data path), which means individual operations are **atomic** with no locking. `INCR`, `SETNX`, and friends just work without races — a property we lean on heavily for locks and counters.
+- **Rich data structures** — values aren't just strings; they can be hashes, lists, sets, sorted sets, and more, so the cache can model the shape of your data instead of forcing everything into serialized blobs.
+- **First-class expiration and eviction** — TTLs and `maxmemory` policies are built in, so Redis is designed from the ground up to be a bounded, self-pruning cache rather than an unbounded store.
+- **Ubiquitous and managed** — every major cloud offers a managed Redis-compatible service, so you rarely have to operate it yourself.
+
+A common comparison is **Redis vs Memcached**. Memcached is a leaner, purely string-based, multi-threaded cache — excellent if all you need is a fast key-value blob store. Redis wins when you want data structures, persistence options, pub/sub, atomic operations, or clustering, which is why it's the more common default today.
+
+## Data Structures for Caching
+
+The right structure makes cache code simpler and more memory-efficient. The ones that come up most in caching:
+
+| Structure   | Caches well                                | Example key                     |
+| ----------- | ------------------------------------------ | ------------------------------- |
+| String      | Serialized objects, rendered HTML, counters | `user:42` → JSON blob           |
+| Hash        | Objects with independently-updated fields  | `user:42` → `{name, email, …}`  |
+| List        | Recent items, simple queues, timelines     | `feed:42` → recent post IDs     |
+| Set         | Membership, tags, unique visitors          | `online:users` → user IDs       |
+| Sorted Set  | Leaderboards, rate limiters, time windows  | `leaderboard` → score→member    |
+
+For example, caching a user as a **hash** lets you update one field without re-serializing the whole object:
+
+```bash
+# Cache a user object as a hash, expiring in 5 minutes
+HSET user:42 name "Ada" email "ada@example.com" plan "pro"
+EXPIRE user:42 300
+
+# Read one field without deserializing the whole object
+HGET user:42 plan
+# "pro"
+```
+
+Whereas a **sorted set** gives you a leaderboard for almost free, because members are kept ordered by score:
+
+```bash
+ZADD leaderboard 4200 "player:7"
+ZADD leaderboard 5100 "player:3"
+ZREVRANGE leaderboard 0 9 WITHSCORES   # top 10
+```
+
+## TTL and Expiration
+
+The defining feature of a cache is that entries don't live forever. In Redis, every key can carry a **time-to-live (TTL)**, after which it's automatically removed.
+
+```bash
+SET session:abc "..." EX 3600     # expire in 3600 seconds
+SETEX page:home 60 "<html>...</html>"   # set + expire in one command
+TTL session:abc                   # seconds remaining (-1 = no expiry, -2 = gone)
+PERSIST session:abc               # remove the TTL, make it permanent
+```
+
+A TTL is your **safety net against stale data**: even if your invalidation logic has a bug and forgets to delete a key, the TTL guarantees the wrong value can only live for a bounded time. For that reason, **almost every cache entry should have a TTL** — a cache without expiry quietly becomes an unbounded store that eventually fills memory.
+
+Redis removes expired keys two ways, working together:
+
+- **Lazy expiration** — when a key is accessed, Redis checks if it's expired and, if so, deletes it then and returns nothing.
+- **Active expiration** — a background job periodically samples keys with TTLs and evicts the expired ones, so keys that are never read again don't linger forever.
+
+## Eviction Policies
+
+TTLs handle keys that have expired. But what happens when the cache hits its memory limit and *no* key has expired yet? That's controlled by `maxmemory` and the `maxmemory-policy`. When usage reaches `maxmemory`, Redis applies the policy to decide what (if anything) to evict to make room for the new write.
+
+```bash
+# Cap memory and evict the least-recently-used key across the whole keyspace
+CONFIG SET maxmemory 2gb
+CONFIG SET maxmemory-policy allkeys-lru
+```
+
+| Policy            | When memory is full, evict…                                  |
+| ----------------- | ------------------------------------------------------------ |
+| `noeviction`      | Nothing — writes fail with an error (the default; wrong for a cache) |
+| `allkeys-lru`     | The least-recently-used key, from all keys                   |
+| `allkeys-lfu`     | The least-*frequently*-used key, from all keys               |
+| `allkeys-random`  | A random key, from all keys                                  |
+| `volatile-lru`    | LRU, but only among keys that have a TTL set                 |
+| `volatile-lfu`    | LFU, but only among keys that have a TTL set                 |
+| `volatile-ttl`    | The key with the nearest expiry, among keys with a TTL       |
+| `volatile-random` | A random key, among keys with a TTL                          |
+
+The critical gotcha: the default is **`noeviction`**, which is correct for Redis-as-a-database but wrong for Redis-as-a-cache. With `noeviction`, once memory fills up, new writes simply **fail** instead of making room. For a pure cache, set `allkeys-lru` (evict whatever's coldest) or `allkeys-lfu` (evict whatever's least popular — usually better, as it resists one-off scans polluting the cache). Use the `volatile-*` family only when you deliberately mix permanent and ephemeral data in the same instance and want eviction to spare the permanent keys.
+
+## Persistence: Usually Off for a Pure Cache
+
+Redis can persist to disk, which feels reassuring — but for a cache it's often the wrong default. The two mechanisms:
+
+- **RDB (snapshots)** — periodically forks and writes a point-in-time snapshot of the dataset to disk. Compact and fast to restore, but you lose everything written since the last snapshot if the process dies.
+- **AOF (append-only file)** — logs every write command, replayed on restart. More durable (down to per-second or per-write), but larger files and slower restarts.
+
+For a **pure cache**, the source of truth is the database — the cache holds disposable copies. Persistence buys you a "warm" cache after a restart (no cold-start miss storm), at the cost of disk I/O on the hot path. Many teams **disable persistence entirely** on cache instances and accept a cold start, or keep light RDB snapshots purely to warm up faster. Reserve full AOF durability for cases where Redis is acting as a system of record (e.g., write-behind buffers or session stores you can't afford to lose), not for a cache that can always be refilled from the database.
+
+## Managed Redis Offerings
+
+You rarely run Redis yourself in production. Both major clouds offer managed, Redis-compatible services that handle provisioning, patching, failover, and backups.
+
+<Tabs items={['GCP', 'AWS']}>
+  <Tab value="GCP">
+    **Memorystore for Redis / Redis Cluster** — fully managed Redis on GCP.
+
+    - **Basic tier** — a single node, no replication. Cheapest; fine for a pure cache where a cold restart is acceptable.
+    - **Standard tier** — a primary with a cross-zone replica and automatic failover for high availability.
+    - **Memorystore for Redis Cluster** — sharded, horizontally scalable Redis Cluster for datasets larger than one node.
+
+    ```bash
+    # A 5 GB highly-available cache instance
+    gcloud redis instances create my-cache \
+      --size=5 \
+      --region=europe-west1 \
+      --tier=standard \
+      --redis-config maxmemory-policy=allkeys-lru
+    ```
+  </Tab>
+  <Tab value="AWS">
+    **ElastiCache** — managed Redis (and Memcached) on AWS, now also offered as the serverless **ElastiCache Serverless**.
+
+    - **Single node** — one instance, no failover. Cheapest, for disposable caches.
+    - **Replication group (cluster mode disabled)** — one primary plus read replicas with Multi-AZ automatic failover.
+    - **Cluster mode enabled** — data sharded across multiple primary/replica shards for horizontal scale.
+    - **ElastiCache Serverless** — capacity scales automatically; you pay for what you use.
+
+    ```bash
+    # A replication group with one replica and automatic failover
+    aws elasticache create-replication-group \
+      --replication-group-id my-cache \
+      --replication-group-description "app cache" \
+      --engine redis \
+      --cache-node-type cache.r7g.large \
+      --num-cache-clusters 2 \
+      --automatic-failover-enabled
+    ```
+  </Tab>
+</Tabs>
+
+Whichever you pick, set the **eviction policy** (`allkeys-lru`/`allkeys-lfu`) and decide on **persistence** explicitly — the managed defaults lean toward "database" semantics, and a cache wants different ones.
+
+## What's Next
+
+A single Redis node has a ceiling on both memory and throughput. [Distributed Caching](/docs/caching/distributed-caching) covers how Redis scales past one node through replication and sharding — and the new failure modes that come with it.
