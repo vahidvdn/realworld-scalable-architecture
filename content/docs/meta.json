@@ -1,4 +1,11 @@
 {
   "title": "Docs",
-  "pages": ["index", "scalable-deployment", "messaging", "load-balancing", "cap-theorem"]
+  "pages": [
+    "index",
+    "scalable-deployment",
+    "messaging",
+    "load-balancing",
+    "cap-theorem",
+    "caching"
+  ]
 }

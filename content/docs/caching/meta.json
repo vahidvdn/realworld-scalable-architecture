@@ -1,0 +1,4 @@
+{
+  "title": "Caching Strategies",
+  "pages": ["index", "caching-patterns", "redis-as-a-cache", "distributed-caching", "invalidation-and-consistency"]
+}
