@@ -6,6 +6,7 @@
     "messaging",
     "load-balancing",
     "cap-theorem",
-    "caching"
+    "caching",
+    "recipes"
   ]
 }
