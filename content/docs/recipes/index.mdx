@@ -1,0 +1,15 @@
+---
+title: Recipes
+description: |
+  Concrete, reusable techniques for common scaling problems — the practical "how" behind the patterns covered elsewhere in this repo.
+---
+
+The other sections of this repo explain the big building blocks — caching, messaging, load balancing. **Recipes** are smaller and more targeted: each one is a self-contained technique you can reach for when a specific problem shows up, usually a place where the naive implementation quietly stops scaling.
+
+A recipe answers a narrow question: *"I'm doing X the obvious way and it's melting under load — what's the standard fix?"* The answer almost always involves trading a little immediacy or simplicity for a large win in throughput, cost, or stability.
+
+## What's in this section
+
+- **[Batching & Aggregation](/docs/recipes/batching-and-aggregation)** — stop doing one database write per event. Buffer high-frequency, low-value writes (likes, views, metrics) and flush them as a single batched or aggregated operation.
+
+More recipes will be added over time. Each one is written to stand on its own, so you can jump straight to the one you need.
